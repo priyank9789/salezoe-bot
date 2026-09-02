@@ -14,8 +14,9 @@ from datetime import datetime, timedelta, timezone
 
 TAG = "gidsonjpg-21"          # the only place the tag lives
 REPEAT_DAYS = 10              # never post the same ASIN twice within this window
-MAX_POSTS_PER_DAY = 3         # channel promises "up to 3 a day"; raise if you want
-MIN_GAP_MINUTES = 240         # channel promises "at least four hours apart"
+MAX_POSTS_PER_DAY = 25        # owner set 25 on 2 Sept 2026
+MIN_GAP_MINUTES = 30          # 25 posts across the 07:00-23:00 window
+QUIET_HOURS = range(23, 24), range(0, 7)   # no posts at night, IST
 IST = timezone(timedelta(hours=5, minutes=30))
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -33,11 +34,13 @@ def link(asin, now):
 def render(deal, now):
     # No price, no MRP, no "% off": Amazon only permits prices sourced from PA-API.
     return (f"{deal['emoji']} {deal['name']}.\n\n{deal['blurb']}\n\n"
-            f"Deal live today — check the price on Amazon:\n{link(deal['asin'], now)}\n\n"
+            f"Check the live price on Amazon:\n{link(deal['asin'], now)}\n\n"
             "Paid link — SALEZOE may earn a commission at no extra cost to you.")
 
 def pick(queue, posted, now):
     cutoff = now - timedelta(days=REPEAT_DAYS)
+    if any(now.hour in r for r in QUIET_HOURS):
+        return None, "quiet hours"
     today = [t for t in posted.values() if datetime.fromisoformat(t).date() == now.date()]
     if len(today) >= MAX_POSTS_PER_DAY:
         return None, "daily cap reached"
@@ -79,9 +82,10 @@ def _selfcheck():
          {"asin": "B", "name": "b", "emoji": "x", "blurb": "b"}]
     assert pick(q, {}, now)[0]["asin"] == "A"
     assert pick(q, {"A": now.isoformat()}, now + timedelta(hours=5))[0]["asin"] == "B"          # A recent → B
-    assert pick(q, {"A": now.isoformat()}, now + timedelta(minutes=30))[0] is None                # 4h gap
+    assert pick(q, {"A": now.isoformat()}, now + timedelta(minutes=10))[0] is None                # gap
     assert pick(q, {"A": (now - timedelta(days=11)).isoformat()}, now)[0]["asin"] == "A"          # repeat ok after 10d
     assert pick(q, {"A": now.isoformat(), "B": now.isoformat()}, now + timedelta(hours=9))[1] != "ok"
+    assert pick(q, {}, datetime(2026, 9, 1, 3, 0, tzinfo=IST))[1] == "quiet hours"
     assert "?tag=gidsonjpg-21" in link("B0TEST0001", now) and "₹" not in render(q[0], now)
     print("selfcheck ok")
 

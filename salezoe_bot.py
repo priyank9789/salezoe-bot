@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """SALEZOE Telegram deal poster. Stdlib only.
 
-Posts the next unposted deal from queue.json to a Telegram channel, records it in
-posted.json, and refuses to repeat an ASIN within REPEAT_DAYS. Run it as often as you
-like (every 10 min via cron is fine): MAX_POSTS_PER_DAY and MIN_GAP_MINUTES decide
-whether a run actually posts, so cron frequency cannot drain the queue.
+Posts the next unposted deal from queue.json to a Telegram channel as a photo card
+with a "View on Amazon" button, records it in posted.json, and refuses to repeat an
+ASIN within REPEAT_DAYS. Run it as often as you like (every 10 min via cron is fine):
+MAX_POSTS_PER_DAY and MIN_GAP_MINUTES decide whether a run actually posts, so cron
+frequency cannot drain the queue.
 
-Env:  TELEGRAM_BOT_TOKEN   from @BotFather (bot must be admin of the channel)
-      TELEGRAM_CHANNEL     e.g. @SALEZOE
+queue.json entry: {"asin": "B0...", "name": "...", "emoji": "x", "img": "61H7-uZtqyL"}
+"img" is the Amazon image id (m.media-amazon.com/images/I/<img>._SL500_.jpg);
+without it the deal is posted as plain text.
+
+Env: TELEGRAM_BOT_TOKEN from @BotFather (bot must be admin of the channel)
+     TELEGRAM_CHANNEL   e.g. @SALEZOE
 """
 import json, os, sys, urllib.request, urllib.parse
 from datetime import datetime, timedelta, timezone
 
 TAG = "gidsonjpg-21"          # the only place the tag lives
 REPEAT_DAYS = 10              # never post the same ASIN twice within this window
-MAX_POSTS_PER_DAY = 4        # owner set 25 on 2 Sept 2026
-MIN_GAP_MINUTES = 30          # 25 posts across the 07:00-23:00 window
+MAX_POSTS_PER_DAY = 4         # curated channels get 10-60% view rate, firehoses ~1%
+MIN_GAP_MINUTES = 120         # spread 4 posts across the day
 QUIET_HOURS = range(23, 24), range(0, 7)   # no posts at night, IST
 IST = timezone(timedelta(hours=5, minutes=30))
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,8 +38,8 @@ def link(asin, now):
 
 def render(deal, now):
     # No price, no MRP, no "% off": Amazon only permits prices sourced from PA-API.
-    return (f"{deal['emoji']} {deal['name']}.\n\n{deal['blurb']}\n\n"
-            f"Check the live price on Amazon:\n{link(deal['asin'], now)}\n\n"
+    blurb = deal.get("blurb") or "Great Indian Festival deal. Tap for today's price on Amazon."
+    return (f"{deal['emoji']} {deal['name']}\n\n{blurb}\n\n"
             "Paid link — SALEZOE may earn a commission at no extra cost to you.")
 
 def pick(queue, posted, now):
@@ -53,11 +58,22 @@ def pick(queue, posted, now):
             return d, "ok"
     return None, "queue exhausted — refill queue.json"
 
-def send(text):
-    token, chan = os.environ["TELEGRAM_BOT_TOKEN"], os.environ["TELEGRAM_CHANNEL"]
-    body = urllib.parse.urlencode({"chat_id": chan, "text": text,
-                                   "disable_web_page_preview": "false"}).encode()
-    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", body)
+def payload(deal, now):
+    """Telegram method + fields: photo card when the deal has an image id, else text."""
+    url = link(deal["asin"], now)
+    fields = {"chat_id": os.environ["TELEGRAM_CHANNEL"],
+              "reply_markup": json.dumps({"inline_keyboard": [[{"text": "🛒 View on Amazon", "url": url}]]})}
+    if deal.get("img"):
+        fields.update(photo=f"https://m.media-amazon.com/images/I/{deal['img']}._SL500_.jpg",
+                      caption=render(deal, now))
+        return "sendPhoto", fields
+    fields.update(text=render(deal, now) + "\n" + url, disable_web_page_preview="false")
+    return "sendMessage", fields
+
+def send(deal, now):
+    method, fields = payload(deal, now)
+    req = urllib.request.Request(f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/{method}",
+                                 urllib.parse.urlencode(fields).encode())
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)["ok"]
 
@@ -67,26 +83,30 @@ def main(dry=False):
     deal, why = pick(queue, posted, now)
     if not deal:
         print("skip:", why); return 0
-    text = render(deal, now)
     if dry:
-        print(text); return 0
-    if send(text):
+        print(payload(deal, now)); return 0
+    if send(deal, now):
         posted[deal["asin"]] = now.isoformat()
         save("posted.json", posted)
         print("posted", deal["asin"], deal["name"])
     return 0
 
 def _selfcheck():
+    os.environ.setdefault("TELEGRAM_CHANNEL", "@test")
     now = datetime(2026, 9, 1, 9, 0, tzinfo=IST)
-    q = [{"asin": "A", "name": "a", "emoji": "x", "blurb": "b"},
+    q = [{"asin": "A", "name": "a", "emoji": "x", "img": "IMG1"},
          {"asin": "B", "name": "b", "emoji": "x", "blurb": "b"}]
     assert pick(q, {}, now)[0]["asin"] == "A"
-    assert pick(q, {"A": now.isoformat()}, now + timedelta(hours=5))[0]["asin"] == "B"          # A recent → B
-    assert pick(q, {"A": now.isoformat()}, now + timedelta(minutes=10))[0] is None                # gap
-    assert pick(q, {"A": (now - timedelta(days=11)).isoformat()}, now)[0]["asin"] == "A"          # repeat ok after 10d
+    assert pick(q, {"A": now.isoformat()}, now + timedelta(hours=5))[0]["asin"] == "B"   # A recent → B
+    assert pick(q, {"A": now.isoformat()}, now + timedelta(minutes=10))[0] is None     # gap
+    assert pick(q, {"A": (now - timedelta(days=11)).isoformat()}, now)[0]["asin"] == "A"  # repeat ok after 10d
     assert pick(q, {"A": now.isoformat(), "B": now.isoformat()}, now + timedelta(hours=9))[1] != "ok"
     assert pick(q, {}, datetime(2026, 9, 1, 3, 0, tzinfo=IST))[1] == "quiet hours"
-    assert "?tag=gidsonjpg-21" in link("B0TEST0001", now) and "₹" not in render(q[0], now)
+    m, f = payload(q[0], now)
+    assert m == "sendPhoto" and "IMG1._SL500_" in f["photo"] and "?tag=gidsonjpg-21" in f["reply_markup"]
+    m, f = payload(q[1], now)
+    assert m == "sendMessage" and "?tag=gidsonjpg-21" in f["text"] and "₹" not in f["text"]
+    assert len(f["text"]) < 1024
     print("selfcheck ok")
 
 if __name__ == "__main__":

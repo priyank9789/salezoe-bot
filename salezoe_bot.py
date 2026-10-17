@@ -18,6 +18,7 @@ import json, os, sys, urllib.request, urllib.parse
 from datetime import datetime, timedelta, timezone
 
 TAG = "gidsonjpg-21"          # the only place the tag lives
+MORE_URL = "https://salezoe.com/today-deals/?utm_source=telegram"
 REPEAT_DAYS = 10              # never post the same ASIN twice within this window
 MAX_POSTS_PER_DAY = 4         # curated channels get 10-60% view rate, firehoses ~1%
 MIN_GAP_MINUTES = 120         # spread 4 posts across the day
@@ -62,7 +63,8 @@ def payload(deal, now):
     """Telegram method + fields: photo card when the deal has an image id, else text."""
     url = link(deal["asin"], now)
     fields = {"chat_id": os.environ["TELEGRAM_CHANNEL"],
-              "reply_markup": json.dumps({"inline_keyboard": [[{"text": "🛒 View on Amazon", "url": url}]]})}
+              "reply_markup": json.dumps({"inline_keyboard": [[{"text": "🛒 View on Amazon", "url": url}],
+                                                              [{"text": "🔥 More deals on salezoe.com", "url": MORE_URL}]]})}
     if deal.get("img"):
         fields.update(photo=f"https://m.media-amazon.com/images/I/{deal['img']}._SL500_.jpg",
                       caption=render(deal, now))

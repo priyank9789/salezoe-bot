@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 TAG = "gidsonjpg-21"          # the only place the tag lives
 REPEAT_DAYS = 10              # never post the same ASIN twice within this window
-MAX_POSTS_PER_DAY = 25        # owner set 25 on 2 Sept 2026
+MAX_POSTS_PER_DAY = 4        # owner set 25 on 2 Sept 2026
 MIN_GAP_MINUTES = 30          # 25 posts across the 07:00-23:00 window
 QUIET_HOURS = range(23, 24), range(0, 7)   # no posts at night, IST
 IST = timezone(timedelta(hours=5, minutes=30))

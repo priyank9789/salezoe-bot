@@ -14,7 +14,8 @@ jobs:
     timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
-      - run: python3 salezoe_bot.py --loop
+      # --loop (a post every 20 min for ~5.5 h per run) only when the repo is public: private repos get just 2000 free Actions minutes/month
+      - run: python3 salezoe_bot.py ${{ github.event.repository.private == false && '--loop' || '' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL: "@SALEZOE"
